@@ -5,11 +5,10 @@ void setup_matrix_keypad();
 void setup_display_module();
 uint8_t get_key_pressed();
 void display_data(uint8_t address, uint8_t value);
-
+void timeoutSetup();
 struct gpio_registers *gpio;
 struct spi_registers *spi;
-unsigned long last_left_button_press = 0;
-unsigned long last_right_button_press = 0;
+unsigned long last_button_press = 0;
 unsigned long last_left_switch_slide = 0;
 unsigned long last_right_switch_slide = 0;
 unsigned long last_keypad_press = 0;
@@ -25,6 +24,9 @@ uint8_t left_switch_current_position = (gpio[A0_A5].input & 0b00010000) >> 4;
 uint8_t right_switch_current_position = (gpio[A0_A5].input & 0b00100000) >> 5;
 uint8_t left_button_current_position = gpio[D8_D13].input & 0b00000001;
 uint8_t right_button_current_position = gpio[D8_D13].input & 0b00000010;
+volatile uint32_t timeoutCounter = 0;
+volatile uint8_t timeoutMode = 0;
+uint8_t timeOutAmount=0;
 
 
 // Layout of Matrix Keypad
@@ -64,6 +66,53 @@ const uint8_t seven_segments[16] = {
 };
 
 // #include "PollingLabTest.h"
+
+
+
+void handle_buttonpress() {
+  
+  if(millis() >= last_button_press) {
+    last_button_press = millis();
+    if(digitalRead(8) == 0) { 
+    if(timeoutMode == 1) {
+        wakeupPress();
+      }
+    else {
+      timeoutCounter = 0;
+      clearDisplay();
+      if (currentOperand == 1) {
+        negateValue(&operand1);
+        outputDisplay(&operand1, 10);
+      }
+      else {
+        negateValue(&operand2);
+        outputDisplay(&operand2, 10);
+        }
+      }
+    }
+    else if(digitalRead(9) == 0) {
+      if(timeoutMode == 1) {
+          wakeupPress();
+        }
+      else {
+          timeoutCounter = 0;
+          clearDisplay();
+        if(currentOperand == 1) {
+          operand1 = 0;
+          lastOperation = '0';
+          errorFlag = 0;
+          outputDisplay(&operand1, 10);
+      }
+      else {
+        operand2 = 0;
+        outputDisplay(&operand1, 10);
+        currentOperand == 1;
+        lastOperation = 'e';
+      }
+    }
+  }
+  }
+}
 
 double getOperand2(int valueAdded, int mode) {
   currentOperand = 2;
@@ -123,6 +172,48 @@ void operate() {
   else {}
 }
 
+void timeoutSetup(){
+  TCCR1A= 0; // set WGM bits to CTC (mode 4)
+  TCCR1B= 0b00001101;// set CS bits to prescaler 1024
+  OCR1A=15625/1000; // compare for 1 second interrupt
+  TIMSK1= 0b00000010;// enable output compare match interrupt A
+  sei(); // enable interrupts
+  }
+
+  ISR(TIMER1_COMPA_vect){
+  timeoutCounter++;
+}
+
+void setTimeOutAmount(){//set timeOutAmount to 5 or 30 based on leftSwitch position
+
+  left_switch_current_position = (gpio[A0_A5].input & 0b00010000) >> 4;
+  if(left_switch_current_position){//rightSide 5 sec
+      timeOutAmount=5;
+      }else{//leftSide 30 sec
+        timeOutAmount=30;
+        }
+
+  }
+
+
+void displayBlank(){
+  setTimeOutAmount();
+  Serial.print("timeOutCounter = ");
+  Serial.println(timeoutCounter);
+    if(timeoutCounter/1000 >= timeOutAmount){
+        display_data(0xC, 0);
+        timeoutMode=1;
+      }
+  }
+
+void wakeupPress(){
+  if(timeoutMode==1){
+      display_data(0xC, 1);//retain display content
+    timeoutCounter=0; // reset timeoutCounter to 0
+    timeoutMode=0; // reset timeoutMode to 0
+      }
+  }
+
 void outputDisplay(int64_t *operand, int mode) {
   clearDisplay();
   if (*operand == 0) {
@@ -177,72 +268,27 @@ void setup() {
   Serial.begin(9600);
   gpio = (gpio_registers*)(IObase + 3);
   spi = (spi_registers*)(IObase + 0x2C);
+  timeoutSetup();
   operand1 = 0;
   operand2 = 0;
   setup_simple_io();
   setup_keypad();
   setup_display_module();
   outputDisplay(&operand1, 10);
+  attachInterrupt(digitalPinToInterrupt(8), handle_buttonpress, FALLING);
+  attachInterrupt(digitalPinToInterrupt(9), handle_buttonpress, FALLING);
 }
 
 void loop() {
+  displayBlank();
   left_switch_current_position = (gpio[A0_A5].input & 0b00010000) >> 4;
   right_switch_current_position = (gpio[A0_A5].input & 0b00100000) >> 5;
   left_button_current_position = gpio[D8_D13].input & 0b00000001;
   right_button_current_position = gpio[D8_D13].input & 0b00000010;
 
-  if ((left_switch_current_position != left_switch_last_position)) {
-    clearDisplay();
-    operand1 = 0;
-    operand2 = 0;
-    //left_switch_last_position = left_switch_current_position;
-  }
-  if (right_button_current_position == 0 && (millis() - last_right_button_press) > 500) {
-    clearDisplay();
-    if(currentOperand == 1) {
-      operand1 = 0;
-      lastOperation = '0';
-      errorFlag = 0;
-    }
-    else {
-      operand2 = 0;
-      currentOperand = 1;
-      lastOperation = 'e';
-      outputDisplay(&operand1, 10);
-    }
-    last_right_button_press = millis();
-  }
-  if (left_button_current_position == 0 && (millis() - last_left_button_press) > 500) {
-    clearDisplay();
-    if (currentOperand == 1) {
-      negateValue(&operand1);
-      outputDisplay(&operand1, 10);
-    }
-    else {
-      negateValue(&operand2);
-      outputDisplay(&operand2, 10);
-    }
-  }
-
   test_simple_io();
-
-  if (left_switch_current_position == 0) {
-    if (millis() - last_keypad_press > 500) {
-      gpio[D8_D13].output &= 0b11101111;
-    }
-    if (((gpio[A0_A5].input & 0b00001111) != 0b00001111) && (millis() - last_keypad_press > 500)) {
-      gpio[D8_D13].output |= 0b00010000;
-      uint8_t keypress = get_key_pressed();
-      if (keypress < 0x10) {
-        Serial.print("Key pressed: ");
-        Serial.println(keypress, HEX);
-        display_data(1, seven_segments[keypress]);
-      } else {
-        Serial.println("Error reading keypad.");
-      }
-    }
-  }
-  else {
+  handle_buttonpress();
+  
     //if right switch == 1, mode = 16
     //else mode = 10
 
@@ -252,9 +298,17 @@ void loop() {
 
 
     
-    if (((gpio[A0_A5].input & 0b00001111) != 0b00001111) && (millis() - last_keypad_press > 500)) { // Change this if statement to if(button 0-9 is pressed)
+    if ( ((gpio[A0_A5].input & 0b00001111) != 0b00001111) && (millis() - last_keypad_press > 500) ) { // Change this if statement to if(button 0-9 is pressed)
       gpio[D8_D13].output |= 0b00010000;
-      uint8_t keypress = get_key_pressed(); //update with new keypress detection.
+
+      
+      if(timeoutMode == 1) {
+        wakeupPress();
+        last_keypad_press = millis();
+      }
+      else {
+        uint8_t keypress = get_key_pressed(); //update with new keypress detection.
+        timeoutCounter = 0;
       if (mode == 10) {
         if (keypress < 10) {
           Serial.print("Key pressed: ");
@@ -294,6 +348,7 @@ void loop() {
               lastOperation = '0';
               operate();
               outputDisplay(&operand1, 10);
+              lastOperation == 'e';
             }
             else
             {
@@ -322,6 +377,7 @@ void loop() {
           outputDisplay(&operand2, mode);
         }
       }
+      }
     }
     if(errorFlag == 1) {
       display_data(1, 0b00000101);
@@ -333,7 +389,20 @@ void loop() {
       display_data(7, 0b00000000);
       display_data(8, 0b00000000);
     }
-  }
+
+
+
+    
+
+
+
+
+
+
+
+
+    
+  
 }
 
 
@@ -434,22 +503,6 @@ void test_simple_io() {
     right_switch_last_position = right_switch_current_position;
     printed_this_time = 1;
     last_right_switch_slide = now;
-  }
-  if (!left_button_current_position && (now - last_left_button_press > 500)) {
-    if (!printed_this_time) {
-      Serial.print(now);
-    }
-    Serial.print("\tLeft button pressed");
-    printed_this_time = 1;
-    last_left_button_press = now;
-  }
-  if (!right_button_current_position && (now - last_right_button_press > 500)) {
-    if (!printed_this_time) {
-      Serial.print(now);
-    }
-    Serial.print("\tRight button pressed");
-    printed_this_time = 1;
-    last_right_button_press = now;
   }
   if (printed_this_time) {
     Serial.println();
