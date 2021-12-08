@@ -1,0 +1,59 @@
+void timeoutSetup();
+
+
+volatile uint8_t timeoutCounter = 0;
+volatile uint8_t timeoutMode = 0;
+uint8_t timeOutAmount=0;
+
+
+
+
+
+
+
+
+
+
+
+
+
+void timeoutSetup(){
+  TCCR1A= 0; // set WGM bits to CTC (mode 4)
+  TCCR1B= 0b00001101;// set CS bits to prescaler 1024
+  OCR1A=15625; // compare for 1 second interrupt
+  TIMSK1= 0b00000010;// enable output compare match interrupt A
+  sei(); // enable interrupts
+  }
+
+  ISR(TIMER1_COMPA_vect){
+  timeoutCounter++;
+}
+
+void setTimeOutAmount(){//set timeOutAmount to 5 or 30 based on leftSwitch position
+
+  left_switch_current_position = (gpio[A0_A5].input & 0b00010000) >> 4;
+  if(left_switch_current_position){//rightSide 5 sec
+      timeOutAmount=5;
+      }else{//leftSide 30 sec
+        timeOutAmount=30;
+        }
+
+  }
+
+
+void displayBlank(){
+  setTimeOutAmount();
+
+    if(timeoutCounter>=timeOutAmount){
+        display_data(0xC, 0);
+        timeoutMode=1;
+      }
+  }
+
+void weakupPress(){
+  if(timeoutMode==1){
+      display_data(0xC, 1);//retain display content
+    timeoutCounter=0; // reset timeoutCounter to 0
+    timeoutMode=0; // reset timeoutMode to 0
+      }
+  }
