@@ -16,6 +16,8 @@ unsigned long last_keypad_press = 0;
 int64_t operand1 = 0;
 int64_t operand2 = 0;
 char lastOperation = '0';
+int currentOperand = 1;
+int errorFlag = 0;
 int mode = 10;
 uint8_t left_switch_last_position = 0;
 uint8_t right_switch_last_position = 0;
@@ -32,10 +34,10 @@ uint8_t right_button_current_position = gpio[D8_D13].input & 0b00000010;
 //        * 0 # D
 // This array holds the values we want each keypad button to correspond to
 const uint8_t keys[4][4] = {
-  {0x1,0x2,0x3,0xA},
-  {0x4,0x5,0x6,0xB},
-  {0x7,0x8,0x9,0xC},
-  {0xF,0x0,0xE,0xD}
+  {0x1, 0x2, 0x3, 0xA},
+  {0x4, 0x5, 0x6, 0xB},
+  {0x7, 0x8, 0x9, 0xC},
+  {0xF, 0x0, 0xE, 0xD}
 };
 
 // Seven Segment Display mapping between segments and bits
@@ -64,8 +66,9 @@ const uint8_t seven_segments[16] = {
 // #include "PollingLabTest.h"
 
 double getOperand2(int valueAdded, int mode) {
+  currentOperand = 2;
   operand2 *= mode;
-  if(operand2 < 0) {
+  if (operand2 < 0) {
     operand2 -= valueAdded;
   }
   else {
@@ -73,64 +76,84 @@ double getOperand2(int valueAdded, int mode) {
   }
   return operand2;
 }
+
+double undoOperand2(int valueRemoved, int mode) {
+  currentOperand = 2;
+  if (operand2 < 0) {
+    operand2 += valueRemoved;
+  }
+  else {
+    operand2 -= valueRemoved;
+  }
+  operand2 /= mode;
+  return operand2;
+}
 double negateValue(int64_t* operand) {
   *operand *= -1;
 }
 
 void operate() {
-  if(lastOperation == '0') {
+  currentOperand = 1;
+  if (lastOperation == '0') {
     operand1 = operand2;
     operand2 = 0;
+    Serial.println("replaced operand 1");
   }
-  else if(lastOperation == 'a') {
+  else if (lastOperation == 'a') {
     operand1 += operand2;
     operand2 = 0;
   }
-  else if(lastOperation == 's') {
+  else if (lastOperation == 's') {
     operand1 -= operand2;
     operand2 = 0;
   }
-  else if(lastOperation == 'm') {
+  else if (lastOperation == 'm') {
     operand1 *= operand2;
     operand2 = 0;
   }
-  else {
-    operand1 /= operand2;
-    operand2 = 0;
+  else if (lastOperation == 'd') {
+    if(operand2 == 0) {
+      errorFlag = 1;
+    }
+    else {
+      operand1 /= operand2;
+      operand2 = 0;
+    }
   }
+  else {}
 }
 
 void outputDisplay(int64_t *operand, int mode) {
   clearDisplay();
-  if(*operand == 0) {
+  if (*operand == 0) {
     display_data(1, seven_segments[0]);
   }
   int64_t valueCopy = *operand;
-  if(*operand < 0 && mode == 10) {
+  if (*operand < 0 && mode == 10) {
     valueCopy *= -1;
   }
-  else if(*operand < 0 && mode == 16) {
+  else if (*operand < 0 && mode == 16) {
     valueCopy &= 0x00000000ffffffff;
   }
-  
-  for(int digit = 8; digit != 0; digit--) {
+
+  for (int digit = 8; digit != 0; digit--) {
     int64_t digitValue = 1;
     int segmentValue = 0;
-    for(int i = 0; i < digit - 1; i++) {
+    for (int i = 0; i < digit - 1; i++) {
       digitValue *= mode;
     }
-    
-    while(valueCopy - (segmentValue * digitValue) >= 0) {
+
+    while (valueCopy - (segmentValue * digitValue) >= 0) {
       segmentValue++;
     }
     segmentValue--;
     valueCopy -= (segmentValue * digitValue);
-    if(valueCopy == *operand || valueCopy == (*operand * -1)) {
-      if(*operand < 0 && mode == 10) {
-        if(digit != 8) {
-        display_data(digit + 1, 0x00);
-       }
-       display_data(digit, 0b00000001);
+    if (valueCopy == *operand || valueCopy == (*operand * -1)) {
+      if (*operand < 0 && mode == 10) {
+        if (digit != 8) {
+          display_data(digit + 1, 0x00);
+        }
+        display_data(digit, 0b00000001);
       }
     }
     else {
@@ -167,111 +190,122 @@ void loop() {
   right_switch_current_position = (gpio[A0_A5].input & 0b00100000) >> 5;
   left_button_current_position = gpio[D8_D13].input & 0b00000001;
   right_button_current_position = gpio[D8_D13].input & 0b00000010;
-  
-   if ((left_switch_current_position != left_switch_last_position)) {
-      clearDisplay();
-      operand1 = 0;
-      operand2 = 0;
-      //left_switch_last_position = left_switch_current_position;
-   }
-   if (right_button_current_position == 0 && (millis() - last_right_button_press) > 500) {
-      clearDisplay();
-      //operand1 = 0;
-      
-      if(mode == 10) {
-        mode = 16;
-      }
-      else {
-        mode = 10;
-      }
-      if(mode == 10 && ((operand1 > 99999999 || operand1 < -9999999) || (operand2 > 99999999 || operand2 < -9999999)) ) {
-        display_data(1, 0b00000101);
-        display_data(2, 0b00011101);
-        display_data(3, 0b00000101);
-        display_data(4, 0b00000101);
-        display_data(5, 0b01001111);
-        display_data(6, 0b00000000);
-        display_data(7, 0b00000000);
-        display_data(8, 0b00000000);
-      }
-      else {
-        outputDisplay(&operand2, mode);
-      }
-      last_right_button_press = millis();
-   }
-   if(left_button_current_position == 0 && (millis() - last_left_button_press) > 500) {
-    clearDisplay();
-    negateValue(operand2);
-    outputDisplay(&operand2, mode);
-   }
-      
-     test_simple_io();
 
-     if(left_switch_current_position == 0) {
-        if(millis() - last_keypad_press > 500) {
+  if ((left_switch_current_position != left_switch_last_position)) {
+    clearDisplay();
+    operand1 = 0;
+    operand2 = 0;
+    //left_switch_last_position = left_switch_current_position;
+  }
+  if (right_button_current_position == 0 && (millis() - last_right_button_press) > 500) {
+    clearDisplay();
+    if(currentOperand == 1) {
+      operand1 = 0;
+      lastOperation = '0';
+      errorFlag = 0;
+    }
+    else {
+      operand2 = 0;
+      currentOperand = 1;
+      lastOperation = 'e';
+      outputDisplay(&operand1, 10);
+    }
+    last_right_button_press = millis();
+  }
+  if (left_button_current_position == 0 && (millis() - last_left_button_press) > 500) {
+    clearDisplay();
+    if (currentOperand == 1) {
+      negateValue(&operand1);
+      outputDisplay(&operand1, 10);
+    }
+    else {
+      negateValue(&operand2);
+      outputDisplay(&operand2, 10);
+    }
+  }
+
+  test_simple_io();
+
+  if (left_switch_current_position == 0) {
+    if (millis() - last_keypad_press > 500) {
       gpio[D8_D13].output &= 0b11101111;
-     }
-     if (((gpio[A0_A5].input & 0b00001111) != 0b00001111) && (millis() - last_keypad_press > 500)) {
-       gpio[D8_D13].output |= 0b00010000;
-       uint8_t keypress = get_key_pressed();
-       if (keypress < 0x10) {
-         Serial.print("Key pressed: ");
-         Serial.println(keypress, HEX);
-         display_data(1, seven_segments[keypress]);
+    }
+    if (((gpio[A0_A5].input & 0b00001111) != 0b00001111) && (millis() - last_keypad_press > 500)) {
+      gpio[D8_D13].output |= 0b00010000;
+      uint8_t keypress = get_key_pressed();
+      if (keypress < 0x10) {
+        Serial.print("Key pressed: ");
+        Serial.println(keypress, HEX);
+        display_data(1, seven_segments[keypress]);
       } else {
-         Serial.println("Error reading keypad.");
-       }
-     }
-   }
-   else {
+        Serial.println("Error reading keypad.");
+      }
+    }
+  }
+  else {
     //if right switch == 1, mode = 16
     //else mode = 10
+
+    if ((operand1 > 99999999 || operand1 < -9999999)) { // reset countdown here
+            errorFlag = 1;
+          }
+
+
+    
     if (((gpio[A0_A5].input & 0b00001111) != 0b00001111) && (millis() - last_keypad_press > 500)) { // Change this if statement to if(button 0-9 is pressed)
       gpio[D8_D13].output |= 0b00010000;
-       uint8_t keypress = get_key_pressed(); //update with new keypress detection.
-       if(mode == 10) {
-        if(keypress < 10) {
+      uint8_t keypress = get_key_pressed(); //update with new keypress detection.
+      if (mode == 10) {
+        if (keypress < 10) {
           Serial.print("Key pressed: ");
           Serial.println(keypress, HEX);
           getOperand2(keypress, mode);
-          if( (operand1 > 99999999 || operand1 < -9999999) || (operand2 > 99999999 || operand2 < -9999999) ) {
-            display_data(1, 0b01011110);
-            display_data(2, 0b00000110);
-            display_data(3, 0b00011111);
-            display_data(4, 0b00000000);
-            display_data(5, 0b00011101);
-            display_data(6, 0b00011101);
-            display_data(7, 0b00001111);
-            display_data(8, 0b00000000);
+          if ((operand2 > 99999999 || operand2 < -9999999)) { // reset countdown here
+            undoOperand2(keypress, mode);
           }
           else {
             outputDisplay(&operand2, mode);
           }
         }
-          else {
-            operate();
-            outputDisplay(&operand1, 10);
-            if(keypress == 0xA) {
+        else {
+          Serial.print("Key pressed: ");
+          Serial.println(keypress, HEX);
+          operate();
+          outputDisplay(&operand1, 10);
+          if (keypress == 0xA) {
             lastOperation = 'a';
             operand2 = 0;
+          }
+          else if (keypress == 0xB) {
+            lastOperation = 's';
+            operand2 = 0;
+          }
+          else if (keypress == 0xC) {
+            lastOperation = 'm';
+            operand2 = 0;
+          }
+          else if (keypress == 0xD) {
+            lastOperation = 'd';
+            operand2 = 0;
+          }
+          else {
+            Serial.println(lastOperation);
+            if (lastOperation == 'e') {
+              lastOperation = '0';
+              operate();
+              outputDisplay(&operand1, 10);
             }
-            else if(keypress == 0xB) {
-              lastOperation = 's';
-              operand2 = 0;
-            }
-            else if(keypress == 0xC) {
-              lastOperation = 'm';
-              operand2 = 0;
-            }
-            else if(keypress == 0xD) {
-              lastOperation = 'd';
-              operand2 = 0;
+            else
+            {
+              lastOperation = 'e';
+              Serial.println("set to e");
             }
           }
-          
-       }
-       else {
-        if( (operand1 > 0xefffffff || operand1 < -2147483648) || (operand2 > 0xefffffff || operand2 < -2147483648) ) {
+        }
+
+      }
+      else {
+        if ( (operand1 > 0xefffffff || operand1 < -2147483648) || (operand2 > 0xefffffff || operand2 < -2147483648) ) {
           display_data(1, 0b01011110);
           display_data(2, 0b00000110);
           display_data(3, 0b00011111);
@@ -287,10 +321,20 @@ void loop() {
           getOperand2(keypress, mode);
           outputDisplay(&operand2, mode);
         }
-       }
+      }
     }
-   }
+    if(errorFlag == 1) {
+      display_data(1, 0b00000101);
+      display_data(2, 0b00011101);
+      display_data(3, 0b00000101);
+      display_data(4, 0b00000101);
+      display_data(5, 0b01001111);
+      display_data(6, 0b00000000);
+      display_data(7, 0b00000000);
+      display_data(8, 0b00000000);
+    }
   }
+}
 
 
 void setup_simple_io() {
@@ -308,7 +352,7 @@ void setup_simple_io() {
 void setup_keypad() {
   gpio[D0_D7].direction |= 0b11110000;
   gpio[D0_D7].output &= 0b00001111;
-  
+
   gpio[A0_A5].direction &= 0b11110000;
   gpio[A0_A5].output |= 0b00001111;
 }
@@ -330,20 +374,20 @@ uint8_t get_key_pressed() {
   unsigned long now = millis();
   if (now - last_keypad_press > 500) {
     last_keypad_press = now;
-    for(int i = 0; i < 4; i++) {
+    for (int i = 0; i < 4; i++) {
       gpio[D0_D7].output |= 0b11110000;
       gpio[D0_D7].output ^= 0b00010000 << i;
 
-      if(!(gpio[A0_A5].input & 0b00000001)) {
+      if (!(gpio[A0_A5].input & 0b00000001)) {
         key_pressed = keys[i][0];
       }
-      else if(!(gpio[A0_A5].input & 0b00000010)) {
+      else if (!(gpio[A0_A5].input & 0b00000010)) {
         key_pressed = keys[i][1];
       }
-      else if(!(gpio[A0_A5].input & 0b00000100)) {
+      else if (!(gpio[A0_A5].input & 0b00000100)) {
         key_pressed = keys[i][2];
       }
-      else if(!(gpio[A0_A5].input & 0b00001000)) {
+      else if (!(gpio[A0_A5].input & 0b00001000)) {
         key_pressed = keys[i][3];
       }
     }
@@ -357,9 +401,9 @@ void display_data(uint8_t address, uint8_t value) {
   // value is the bit pattern to place in the register
   gpio[D8_D13].output &= 0b11111011;
   spi->data = address;
-  while(!(spi->status & 0b10000000)){}
+  while (!(spi->status & 0b10000000)) {}
   spi->data = value;
-  while(!(spi->status & 0b10000000)){}
+  while (!(spi->status & 0b10000000)) {}
   gpio[D8_D13].output |= 0b00000100;
 }
 
@@ -407,14 +451,14 @@ void test_simple_io() {
     printed_this_time = 1;
     last_right_button_press = now;
   }
-  if(printed_this_time) {
+  if (printed_this_time) {
     Serial.println();
   }
   //digitalWrite(12, left_switch_current_position && right_switch_current_position);
   /*if(left_switch_current_position & right_switch_current_position) {
     gpio[D8_D13].output |= 0b00010000;
-  }
-  else {
+    }
+    else {
     gpio[D8_D13].output &= 0b11101111;
-  }*/
+    }*/
 }
