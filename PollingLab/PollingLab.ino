@@ -71,7 +71,7 @@ const uint8_t seven_segments[16] = {
 
 void handle_buttonpress() {
   
-  if(millis() >= last_button_press) {
+  if( (millis() - last_button_press) > 500) {
     last_button_press = millis();
     if(digitalRead(8) == 0) { 
     if(timeoutMode == 1) {
@@ -277,6 +277,10 @@ void setup() {
   outputDisplay(&operand1, 10);
   attachInterrupt(digitalPinToInterrupt(8), handle_buttonpress, FALLING);
   attachInterrupt(digitalPinToInterrupt(9), handle_buttonpress, FALLING);
+  /*attachInterupt(analogPinToInterrupt(), handle_keypress, CHANGE);
+  attachInterupt(, handle_keypress, CHANGE);
+  attachInterupt(, handle_keypress, CHANGE);
+  attachInterupt(, handle_keypress, CHANGE);*/
 }
 
 void loop() {
@@ -298,7 +302,7 @@ void loop() {
 
 
     
-    if ( ((gpio[A0_A5].input & 0b00001111) != 0b00001111) && (millis() - last_keypad_press > 500) ) { // Change this if statement to if(button 0-9 is pressed)
+    if ( ((gpio[A0_A5].input & 0b00001111) != 0b00001111) && (millis() - last_keypad_press > 500) ) {
       gpio[D8_D13].output |= 0b00010000;
 
       
